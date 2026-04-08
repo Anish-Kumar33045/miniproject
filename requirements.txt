@@ -10,3 +10,6 @@ joblib
 plotly
 streamlit-authenticator
 bcrypt
+psycopg2-binary
+sqlalchemy
+python-dotenv
