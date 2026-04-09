@@ -1,0 +1,33 @@
+services:
+  - type: web
+    name: behaviorguard
+    runtime: python
+    buildCommand: pip install -r requirements.txt && cd app && python3 init_db.py && python3 model.py
+    startCommand: cd app && streamlit run main.py --server.port $PORT --server.address 0.0.0.0
+    envVars:
+      - key: DB_HOST
+        fromDatabase:
+          name: behaviorguard-db
+          property: host
+      - key: DB_PORT
+        fromDatabase:
+          name: behaviorguard-db
+          property: port
+      - key: DB_NAME
+        fromDatabase:
+          name: behaviorguard-db
+          property: database
+      - key: DB_USER
+        fromDatabase:
+          name: behaviorguard-db
+          property: user
+      - key: DB_PASSWORD
+        fromDatabase:
+          name: behaviorguard-db
+          property: password
+      - key: SECRET_KEY
+        value: behaviorguard_super_secret_2024
+
+databases:
+  - name: behaviorguard-db
+    plan: free
