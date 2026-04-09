@@ -9,7 +9,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 
 def train():
     print("Loading data...")
-    df = pd.read_csv('../data/transactions.csv')
+    BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    df = pd.read_csv(os.path.join(BASE, 'data', 'transactions.csv'))
     print("Preprocessing...")
     X_scaled, X_raw, scaler, encoder = preprocess(df, fit=True)
     y = df['is_fraud'].values
@@ -36,16 +37,17 @@ def train():
     print(classification_report(y, y_pred, target_names=['Legit','Fraud']))
     print(f"AUC-ROC: {roc_auc_score(y, y_proba):.4f}")
 
-    os.makedirs('../models', exist_ok=True)
-    joblib.dump(rf,  '../models/rf_model.pkl')
-    joblib.dump(iso, '../models/iso_model.pkl')
+    os.makedirs(os.path.join(BASE, 'models'), exist_ok=True)
+    joblib.dump(rf,  os.path.join(BASE, 'models', 'rf_model.pkl'))
+    joblib.dump(iso, os.path.join(BASE, 'models', 'iso_model.pkl'))
     print("Models saved.")
 
 def predict(df: pd.DataFrame):
-    scaler  = joblib.load('../models/scaler.pkl')
-    encoder = joblib.load('../models/encoder.pkl')
-    rf      = joblib.load('../models/rf_model.pkl')
-    iso     = joblib.load('../models/iso_model.pkl')
+    BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    scaler  = joblib.load(os.path.join(BASE, 'models', 'scaler.pkl'))
+    encoder = joblib.load(os.path.join(BASE, 'models', 'encoder.pkl'))
+    rf      = joblib.load(os.path.join(BASE, 'models', 'rf_model.pkl'))
+    iso     = joblib.load(os.path.join(BASE, 'models', 'iso_model.pkl'))
 
     X_scaled, X_raw, _, _ = preprocess(df, fit=False, scaler=scaler, encoder=encoder)
 

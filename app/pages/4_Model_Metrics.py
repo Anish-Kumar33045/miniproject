@@ -12,20 +12,29 @@ if not st.session_state.get('logged_in'):
 st.set_page_config(page_title="Model metrics", layout="wide")
 st.title("🧪 Model performance metrics")
 
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 @st.cache_data
 def load_metrics():
-    try:
-        df = pd.read_csv('../data/transactions.csv')
-        scaler  = joblib.load('../models/scaler.pkl')
-        encoder = joblib.load('../models/encoder.pkl')
-        rf      = joblib.load('../models/rf_model.pkl')
-        X_scaled, _, _, _ = preprocess(df, fit=False, scaler=scaler, encoder=encoder)
-        y_true  = df['is_fraud'].values
-        y_proba = rf.predict_proba(X_scaled)[:,1]
-        y_pred  = (y_proba >= 0.4).astype(int)
-        return y_true, y_proba, y_pred, rf
-    except Exception as e:
-        return None, None, None, None
+        try:
+          data_path  = os.path.join(BASE, 'data',   'transactions.csv')
+          scaler_p   = os.path.join(BASE, 'models', 'scaler.pkl')
+          encoder_p  = os.path.join(BASE, 'models', 'encoder.pkl')
+          rf_p       = os.path.join(BASE, 'models', 'rf_model.pkl')
+
+          df      = pd.read_csv(data_path)
+          scaler  = joblib.load(scaler_p)
+          encoder = joblib.load(encoder_p)
+          rf      = joblib.load(rf_p)
+
+          X_scaled, _, _, _ = preprocess(df, fit=False, scaler=scaler, encoder=encoder)
+          y_true  = df['is_fraud'].values
+          y_proba = rf.predict_proba(X_scaled)[:,1]
+          y_pred  = (y_proba >= 0.4).astype(int)
+          return y_true, y_proba, y_pred, rf
+        except Exception as e:
+          st.error(f"Error loading model: {e}")
+          return None, None, None, None
 
 y_true, y_proba, y_pred, rf = load_metrics()
 
