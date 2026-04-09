@@ -5,9 +5,9 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import declarative_base, sessionmaker, relationship
 from sqlalchemy.dialects.postgresql import UUID
-from dotenv import load_dotenv
 import uuid, bcrypt
 
+from dotenv import load_dotenv
 load_dotenv()
 
 DB_URL = (
