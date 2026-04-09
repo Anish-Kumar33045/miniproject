@@ -11,6 +11,7 @@ FEATURE_COLS = [
 ]
 
 def preprocess(df: pd.DataFrame, fit=False, scaler=None, encoder=None):
+    BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     df = df.copy()
     if 'amount_to_avg_ratio' not in df.columns:
         df['amount_to_avg_ratio'] = df['amount'] / (df['avg_amount_7d'] + 1)
@@ -27,9 +28,9 @@ def preprocess(df: pd.DataFrame, fit=False, scaler=None, encoder=None):
         scaler = StandardScaler()
         X = df[FEATURE_COLS].copy()
         X_scaled = scaler.fit_transform(X)
-        os.makedirs('models', exist_ok=True)
-        joblib.dump(scaler, 'models/scaler.pkl')
-        joblib.dump(encoder, 'models/encoder.pkl')
+        os.makedirs(os.path.join(BASE, 'models'), exist_ok=True)
+        joblib.dump(scaler, os.path.join(BASE, 'models', 'scaler.pkl'))
+        joblib.dump(encoder, os.path.join(BASE, 'models', 'encoder.pkl'))
     else:
         df['merchant_cat_enc'] = encoder.transform(df['merchant_cat'])
         X = df[FEATURE_COLS].copy()

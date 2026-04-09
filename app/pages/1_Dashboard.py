@@ -1,51 +1,74 @@
-import streamlit as st, sys, os
+import streamlit as st
+import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
-import pandas as pd, numpy as np, plotly.graph_objects as go
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
+import uuid
 
 if not st.session_state.get('logged_in'):
-    st.warning("Please login first."); st.stop()
+    st.warning("Please login first.")
+    st.stop()
 
 from model import predict
 from explainer import get_shap_explanation
 from alert import generate_alert
+from database import (
+    SessionLocal, save_transactions, save_fraud_results,
+    get_user_transactions, get_user_fraud_results
+)
 
 st.set_page_config(page_title="Dashboard", layout="wide")
 st.title("🏠 Dashboard")
+
+BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def make_sample():
     np.random.seed(7)
     rows = []
     cats = ['grocery','food','transport','shopping','utility',
             'entertainment','healthcare','travel','fuel','education']
+    MERCHANT_RISK = {
+        'grocery':0.05,'transport':0.08,'food':0.07,'utility':0.04,
+        'shopping':0.18,'entertainment':0.22,'healthcare':0.06,
+        'education':0.03,'travel':0.25,'fuel':0.10
+    }
     for _ in range(40):
+        mc = np.random.choice(cats[:5])
         rows.append({
-            'amount': round(np.random.lognormal(7,1),2),
+            'amount': round(abs(np.random.lognormal(7,1)),2),
             'hour': np.random.choice(range(8,23)),
             'day_of_week': np.random.randint(0,7),
-            'merchant_cat': np.random.choice(cats[:5]),
-            'is_new_merchant': 0, 'txn_per_day': np.random.randint(1,4),
-            'avg_amount_7d': round(np.random.lognormal(7,0.8),2),
+            'merchant_cat': mc,
+            'merchant_risk_score': MERCHANT_RISK[mc],
+            'is_new_merchant': 0,
+            'txn_per_day': np.random.randint(1,4),
+            'avg_amount_7d': round(abs(np.random.lognormal(7,0.8)),2),
             'device_change': 0, 'location_change': 0,
             'failed_txn_count': 0, 'is_weekend': 0,
-            'merchant_risk_score': 0.07,
             'city': np.random.choice(['Bengaluru','Mumbai','Delhi']),
             'bank': np.random.choice(['HDFC','SBI','ICICI']),
         })
     for _ in range(10):
+        mc = np.random.choice(['travel','entertainment','shopping'])
         rows.append({
-            'amount': round(np.random.lognormal(10,1),2),
+            'amount': round(abs(np.random.lognormal(10,1)),2),
             'hour': np.random.choice([1,2,3]),
             'day_of_week': np.random.randint(0,7),
-            'merchant_cat': np.random.choice(['travel','entertainment','shopping']),
-            'is_new_merchant': 1, 'txn_per_day': np.random.randint(8,15),
-            'avg_amount_7d': round(np.random.lognormal(6,0.5),2),
+            'merchant_cat': mc,
+            'merchant_risk_score': MERCHANT_RISK[mc],
+            'is_new_merchant': 1,
+            'txn_per_day': np.random.randint(8,15),
+            'avg_amount_7d': round(abs(np.random.lognormal(6,0.5)),2),
             'device_change': 1, 'location_change': 1,
             'failed_txn_count': np.random.randint(1,4),
-            'is_weekend': 1, 'merchant_risk_score': 0.22,
+            'is_weekend': 1,
             'city': np.random.choice(['Chennai','Hyderabad']),
             'bank': np.random.choice(['Yes Bank','Kotak']),
         })
     df = pd.DataFrame(rows)
+    df['amount']         = df['amount'].clip(10, 200000)
+    df['avg_amount_7d']  = df['avg_amount_7d'].clip(50, 50000)
     df['amount_to_avg_ratio'] = df['amount'] / (df['avg_amount_7d'] + 1)
     df.insert(0, 'txn_id', ['TXN' + str(i).zfill(4) for i in range(len(df))])
     df['txn_date'] = pd.date_range('2024-01-01', periods=len(df), freq='6H').strftime('%Y-%m-%d')
@@ -53,40 +76,73 @@ def make_sample():
 
 with st.sidebar:
     st.header("Load data")
+    load_from_db = st.button("Load my saved transactions")
     if st.button("Use sample data (50 txns)"):
         st.session_state.df_input = make_sample()
+        st.session_state.pop('results', None)
     uploaded = st.file_uploader("Or upload CSV", type=['csv'])
     if uploaded:
         df_up = pd.read_csv(uploaded)
         if 'amount_to_avg_ratio' not in df_up.columns:
             df_up['amount_to_avg_ratio'] = df_up['amount'] / (df_up['avg_amount_7d'] + 1)
         st.session_state.df_input = df_up
+        st.session_state.pop('results', None)
+
+user_id = uuid.UUID(st.session_state.get('user_id'))
+
+if load_from_db:
+    db = SessionLocal()
+    df_db    = get_user_transactions(db, user_id)
+    res_db   = get_user_fraud_results(db, user_id)
+    db.close()
+    if df_db.empty:
+        st.warning("No saved transactions found. Upload a CSV or use sample data.")
+    else:
+        merged = df_db.merge(res_db, on='txn_id', how='left')
+        st.session_state.df_input = df_db
+        st.session_state.results  = merged
+        st.success(f"Loaded {len(df_db)} transactions from your account.")
 
 df_input = st.session_state.get('df_input')
-
 if df_input is None:
-    st.info("Load sample data or upload a CSV from the sidebar.")
+    st.info("Load sample data, upload a CSV, or load your saved transactions from the sidebar.")
     st.stop()
 
-with st.spinner("Running fraud detection..."):
-    try:
-        results, X_raw = predict(df_input)
-    except FileNotFoundError:
-        st.error("Model not found. Run `python3 model.py` first.")
-        st.stop()
+if st.session_state.get('results') is None:
+    with st.spinner("Running fraud detection..."):
+        try:
+            results, X_raw = predict(df_input)
+            st.session_state.results = results
+            st.session_state.X_raw   = X_raw
+        except FileNotFoundError as e:
+            st.error(f"Model file not found: {e}. Run `python3 model.py` from the app/ folder.")
+            st.stop()
 
-st.session_state.results = results
-st.session_state.X_raw   = X_raw
+    if 'txn_id' not in df_input.columns:
+        df_input.insert(0, 'txn_id',
+            ['TXN' + uuid.uuid4().hex[:8].upper() for _ in range(len(df_input))])
+        results['txn_id'] = df_input['txn_id'].values
+        st.session_state.df_input = df_input
+        st.session_state.results  = results
 
-fraud_df  = results[results['is_fraud_predicted'] == 1]
+    db = SessionLocal()
+    saved = save_transactions(db, df_input, user_id)
+    save_fraud_results(db, results, user_id)
+    db.close()
+    if saved > 0:
+        st.success(f"{saved} transactions saved to your account.")
+
+results = st.session_state.results
+
+fraud_df  = results[results['is_fraud_predicted'] == 1] if 'is_fraud_predicted' in results.columns else pd.DataFrame()
 total     = len(results)
 n_fraud   = len(fraud_df)
-avg_prob  = results['fraud_probability'].mean()
-high_risk = len(results[results['fraud_probability'] >= 75])
+avg_prob  = results['fraud_probability'].mean() if 'fraud_probability' in results.columns else 0
+high_risk = len(results[results['fraud_probability'] >= 75]) if 'fraud_probability' in results.columns else 0
 
 c1,c2,c3,c4 = st.columns(4)
 c1.metric("Total transactions", total)
-c2.metric("Flagged as fraud", n_fraud, delta=f"{n_fraud/total*100:.1f}%", delta_color="inverse")
+c2.metric("Flagged as fraud", n_fraud, delta=f"{n_fraud/total*100:.1f}%" if total else "0%", delta_color="inverse")
 c3.metric("High risk (≥75%)", high_risk)
 c4.metric("Avg fraud score", f"{avg_prob:.1f}%")
 
@@ -124,20 +180,30 @@ with col2:
 if n_fraud > 0:
     st.markdown("---")
     st.markdown("#### Fraud alerts")
-    for idx, row in fraud_df.iterrows():
-        prob = row['fraud_probability']
-        with st.expander(f"{'🚨' if prob>=75 else '⚠️'} TXN {row.get('txn_id',idx)} — ₹{row['amount']:,.0f} — {prob:.1f}%"):
-            shap_top   = get_shap_explanation(X_raw, idx)
-            alert_text = generate_alert(row.to_dict(), shap_top)
-            st.code(alert_text, language=None)
-            feats = [f for f,_ in shap_top]
-            vals  = [v for _,v in shap_top]
-            fig2 = go.Figure(go.Bar(
-                x=vals, y=feats, orientation='h',
-                marker_color=['#ef4444' if v>0 else '#22c55e' for v in vals],
-                marker_line_width=0
-            ))
-            fig2.update_layout(margin=dict(t=5,b=5,l=5,r=5), height=200,
-                               plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
-                               xaxis_title="SHAP impact on fraud score")
-            st.plotly_chart(fig2, use_container_width=True)
+    X_raw = st.session_state.get('X_raw')
+    for i, (idx, row) in enumerate(fraud_df.iterrows()):
+        prob = row.get('fraud_probability', 0)
+        with st.expander(f"{'🚨' if prob>=75 else '⚠️'} {row.get('txn_id', idx)} — ₹{row['amount']:,.0f} — {prob:.1f}%"):
+            if X_raw is not None:
+                try:
+                    shap_top   = get_shap_explanation(X_raw, idx)
+                    alert_text = generate_alert(row.to_dict(), shap_top)
+                    st.code(alert_text, language=None)
+                    feats = [f for f,_ in shap_top]
+                    vals  = [v for _,v in shap_top]
+                    fig2 = go.Figure(go.Bar(
+                        x=vals, y=feats, orientation='h',
+                        marker_color=['#ef4444' if v>0 else '#22c55e' for v in vals],
+                        marker_line_width=0
+                    ))
+                    fig2.update_layout(
+                        margin=dict(t=5,b=5,l=5,r=5), height=200,
+                        plot_bgcolor='rgba(0,0,0,0)', paper_bgcolor='rgba(0,0,0,0)',
+                        xaxis_title="SHAP impact on fraud score"
+                    )
+                    st.plotly_chart(fig2, use_container_width=True)
+                except Exception:
+                    st.write(f"Fraud probability: {prob:.1f}%")
+            else:
+                alert_text = generate_alert(row.to_dict(), [])
+                st.code(alert_text, language=None)
