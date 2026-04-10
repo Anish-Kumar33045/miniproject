@@ -74,39 +74,96 @@ def make_sample():
     df['txn_date'] = pd.date_range('2024-01-01', periods=len(df), freq='6H').strftime('%Y-%m-%d')
     return df
 
+user_id = uuid.UUID(st.session_state.get('user_id'))
+
 with st.sidebar:
     st.header("Load data")
-    load_from_db = st.button("Load my saved transactions")
+
+    if st.button("Load my saved transactions"):
+        db = SessionLocal()
+        df_db  = get_user_transactions(db, user_id)
+        res_db = get_user_fraud_results(db, user_id)
+        db.close()
+        if df_db.empty:
+            st.warning("No saved transactions yet.")
+        else:
+            merged = df_db.merge(res_db, on='txn_id', how='left')
+            st.session_state.df_input = df_db
+            st.session_state.results  = merged
+            st.success(f"Loaded {len(df_db)} transactions.")
+
     if st.button("Use sample data (50 txns)"):
         st.session_state.df_input = make_sample()
         st.session_state.pop('results', None)
-    uploaded = st.file_uploader("Or upload CSV", type=['csv'])
-    if uploaded:
-        df_up = pd.read_csv(uploaded)
-        if 'amount_to_avg_ratio' not in df_up.columns:
-            df_up['amount_to_avg_ratio'] = df_up['amount'] / (df_up['avg_amount_7d'] + 1)
-        st.session_state.df_input = df_up
-        st.session_state.pop('results', None)
+        st.success("Sample data loaded.")
+
+    st.markdown("---")
+    st.markdown("#### Upload your statement")
+    st.caption("GPay • PhonePe • Paytm • Any bank PDF or CSV")
+
+    uploaded = st.file_uploader(
+        "Drop PDF or CSV here",
+        type=['pdf', 'csv'],
+        help="GPay/PhonePe PDF statements and CSV exports are supported"
+    )
+
+    if uploaded is not None:
+        file_bytes = uploaded.read()
+        file_name  = uploaded.name.lower()
+
+        with st.spinner(f"Parsing {uploaded.name}..."):
+            from pdf_parser import parse_pdf, parse_csv
+
+            if file_name.endswith('.pdf'):
+                df_parsed = parse_pdf(file_bytes)
+            else:
+                df_parsed = parse_csv(file_bytes)
+
+        if df_parsed is None or df_parsed.empty:
+            st.error(
+                "Could not extract transactions from this file.\n\n"
+                "**Tips:**\n"
+                "- GPay: Profile → Transaction history → Download\n"
+                "- PhonePe: History → Download statement\n"
+                "- Make sure the PDF is not password protected\n"
+                "- Try the sample data to test the app"
+            )
+        else:
+            st.session_state.df_input = df_parsed
+            st.session_state.pop('results', None)
+            st.success(f"Extracted {len(df_parsed)} transactions!")
+            if 'description' in df_parsed.columns:
+                st.dataframe(
+                    df_parsed[['txn_date','amount','merchant_cat','description']].head(5),
+                    use_container_width=True
+                )
 
 user_id = uuid.UUID(st.session_state.get('user_id'))
-
-if load_from_db:
-    db = SessionLocal()
-    df_db    = get_user_transactions(db, user_id)
-    res_db   = get_user_fraud_results(db, user_id)
-    db.close()
-    if df_db.empty:
-        st.warning("No saved transactions found. Upload a CSV or use sample data.")
-    else:
-        merged = df_db.merge(res_db, on='txn_id', how='left')
-        st.session_state.df_input = df_db
-        st.session_state.results  = merged
-        st.success(f"Loaded {len(df_db)} transactions from your account.")
 
 df_input = st.session_state.get('df_input')
 if df_input is None:
     st.info("Load sample data, upload a CSV, or load your saved transactions from the sidebar.")
     st.stop()
+
+# ── ensure all required columns exist before predict 
+REQUIRED = {
+    'hour': 12, 'day_of_week': 0, 'is_new_merchant': 0,
+    'txn_per_day': 1, 'avg_amount_7d': 500.0, 'device_change': 0,
+    'location_change': 0, 'failed_txn_count': 0, 'is_weekend': 0,
+    'merchant_risk_score': 0.1, 'merchant_cat': 'other',
+    'amount_to_avg_ratio': 1.0, 'city': 'Unknown', 'bank': 'HDFC'
+}
+for col, default in REQUIRED.items():
+    if col not in df_input.columns:
+        df_input[col] = default
+
+if 'amount_to_avg_ratio' not in df_input.columns or df_input['amount_to_avg_ratio'].isnull().all():
+    df_input['amount_to_avg_ratio'] = df_input['amount'] / (df_input['avg_amount_7d'] + 1)
+
+if 'txn_id' not in df_input.columns:
+    df_input.insert(0, 'txn_id',
+        ['TXN' + uuid.uuid4().hex[:8].upper() for _ in range(len(df_input))])
+
 
 if st.session_state.get('results') is None:
     with st.spinner("Running fraud detection..."):
@@ -151,12 +208,16 @@ col1, col2 = st.columns([3,2])
 
 with col1:
     st.markdown("#### All transactions")
-    disp_cols = [c for c in ['txn_id','amount','merchant_cat','hour','city',
-                              'fraud_probability','is_fraud_predicted'] if c in results.columns]
+    disp_cols = [c for c in ['txn_id','txn_date','amount','merchant_cat',
+                            'description','hour','city',
+                            'fraud_probability','is_fraud_predicted']
+                 if c in results.columns]
+
     def color_prob(val):
         if val >= 75: return 'background-color:#fee2e2'
         elif val >= 45: return 'background-color:#fef3c7'
         return ''
+
     st.dataframe(
         results[disp_cols].style.applymap(color_prob, subset=['fraud_probability']),
         use_container_width=True, height=340
