@@ -14,3 +14,5 @@ psycopg2-binary
 sqlalchemy
 python-dotenv
 gunicorn
+xgboost
+pdfplumber
