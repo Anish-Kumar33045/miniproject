@@ -9,19 +9,21 @@ n_fraud = int(n * fraud_ratio)
 n_legit = n - n_fraud
 
 MERCHANTS = ['grocery','transport','food','utility','shopping',
-             'entertainment','healthcare','education','travel','fuel']
+             'entertainment','healthcare','education','travel','fuel','other']
+
 MERCHANT_RISK = {
     'grocery':0.05,'transport':0.08,'food':0.07,'utility':0.04,
     'shopping':0.18,'entertainment':0.22,'healthcare':0.06,
-    'education':0.03,'travel':0.25,'fuel':0.10
+    'education':0.03,'travel':0.25,'fuel':0.10,'other':0.12
 }
+
 CITIES = ['Mumbai','Delhi','Bengaluru','Chennai','Hyderabad',
           'Pune','Kolkata','Ahmedabad']
 BANKS  = ['HDFC','SBI','ICICI','Axis','Kotak','Yes Bank']
 
 def make_legit(n):
-    mc = np.random.choice(MERCHANTS, n, p=[0.18,0.15,0.15,0.12,0.12,
-                                            0.08,0.07,0.05,0.05,0.03])
+    mc = np.random.choice(MERCHANTS, n, p=[0.16,0.13,0.13,0.10,0.10,
+                                            0.08,0.07,0.05,0.05,0.03,0.10])
     hours = np.random.choice(range(7,23), n)
     amt   = np.random.lognormal(7, 1, n).clip(10, 50000)
     avg7  = np.random.lognormal(7, 0.8, n).clip(50, 30000)
@@ -44,8 +46,8 @@ def make_legit(n):
     })
 
 def make_fraud(n):
-    mc = np.random.choice(MERCHANTS, n, p=[0.05,0.05,0.10,0.03,0.22,
-                                            0.20,0.05,0.02,0.25,0.03])
+    mc = np.random.choice(MERCHANTS, n, p=[0.05,0.04,0.09,0.03,0.20,
+                                            0.18,0.05,0.02,0.22,0.03,0.09])
     hours = np.random.choice(range(0,6), n)
     amt   = np.random.lognormal(10, 1.2, n).clip(5000, 500000)
     avg7  = np.random.lognormal(6, 0.5, n).clip(50, 10000)

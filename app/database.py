@@ -10,12 +10,14 @@ import uuid, bcrypt
 from dotenv import load_dotenv
 load_dotenv()
 
-DB_URL = (
-    f"postgresql://{os.getenv('DB_USER')}:{os.getenv('DB_PASSWORD')}"
-    f"@{os.getenv('DB_HOST')}:{os.getenv('DB_PORT')}/{os.getenv('DB_NAME')}"
-)
+DB_URL = os.getenv("DATABASE_URL")
 
-engine = create_engine(DB_URL, echo=False, pool_pre_ping=True)
+engine = create_engine(
+    DB_URL,
+    echo=False,
+    pool_pre_ping=True,
+    connect_args={"sslmode": "require"}
+)
 SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 Base = declarative_base()
 
