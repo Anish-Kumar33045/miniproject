@@ -1,3 +1,4 @@
+import csv
 import pdfplumber
 import pandas as pd
 import numpy as np
@@ -62,8 +63,11 @@ def detect_bank(desc: str) -> str:
 def parse_amount(s) -> float:
     if s is None:
         return 0.0
-    s = re.sub(r'[₹,\s]', '', str(s))
-    s = re.sub(r'[DrCrDRCR]+$', '', s, flags=re.IGNORECASE)
+    s = str(s)
+    s = re.sub(r'[₹,\s\(\)]', '', s)
+    s = re.sub(r'[-+]$', '', s)
+    s = re.sub(r'[DrCrdrcr]+$', '', s, flags=re.IGNORECASE)
+    s = re.sub(r'^[+-]', '', s)
     try:
         return abs(float(s))
     except:
@@ -77,7 +81,11 @@ def parse_date(s) -> datetime:
     fmts = [
         '%d/%m/%Y','%d-%m-%Y','%Y-%m-%d','%d/%m/%y','%d-%m-%y',
         '%d %b %Y','%d %B %Y','%b %d, %Y','%B %d, %Y',
+        '%d%b,%Y','%d%b,%y','%d %b,%Y','%d %b,%y',
         '%m/%d/%Y','%d-%b-%Y','%d %b, %Y','%Y/%m/%d',
+        '%Y-%m-%d %H:%M:%S','%d/%m/%Y %H:%M:%S','%d-%m-%Y %H:%M:%S',
+        '%d/%m/%Y %H:%M','%d-%m-%Y %H:%M','%d %b %Y %H:%M','%d %B %Y %H:%M',
+        '%d %b %Y %I:%M %p','%d %B %Y %I:%M %p',
     ]
     for fmt in fmts:
         try:
@@ -90,7 +98,7 @@ def parse_date(s) -> datetime:
         for fmt in ['%d %b %Y','%d %B %Y','%d/%m/%Y']:
             try:
                 cleaned = f"{match.group(1)} {match.group(2)} {match.group(3)}"
-                return datetime.strptime(cleaned, '%d %b %Y')
+                return datetime.strptime(cleaned, fmt)
             except:
                 continue
     return None
@@ -152,23 +160,41 @@ def parse_csv(file_bytes: bytes) -> pd.DataFrame:
     """
     encodings = ['utf-8-sig', 'utf-8', 'latin-1', 'cp1252']
     df = None
-    for enc in encodings:
+
+    def try_read_csv(**kwargs):
         try:
-            df = pd.read_csv(io.BytesIO(file_bytes), encoding=enc)
+            return pd.read_csv(io.BytesIO(file_bytes), **kwargs)
+        except Exception:
+            return None
+
+    for enc in encodings:
+        df = try_read_csv(encoding=enc, skipinitialspace=True)
+        if df is not None and not df.empty and len(df.columns) > 1:
             break
-        except:
-            continue
+
+    if df is None or df.empty or len(df.columns) == 1:
+        for enc in encodings:
+            df = try_read_csv(sep=None, engine='python', encoding=enc, skipinitialspace=True)
+            if df is not None and not df.empty and len(df.columns) > 1:
+                break
+
+    if df is None or df.empty or len(df.columns) == 1:
+        for enc in encodings:
+            for sep in [',', ';', '\t', '|']:
+                df = try_read_csv(sep=sep, encoding=enc, skipinitialspace=True)
+                if df is not None and not df.empty and len(df.columns) > 1:
+                    break
+            if df is not None and not df.empty and len(df.columns) > 1:
+                break
 
     if df is None or df.empty:
-        # try skipping rows until we find a real header
         for skip in range(1, 10):
-            try:
-                df = pd.read_csv(io.BytesIO(file_bytes), skiprows=skip,
-                                 encoding='utf-8-sig')
-                if len(df.columns) >= 2 and len(df) > 0:
+            for enc in encodings:
+                df = try_read_csv(skiprows=skip, encoding=enc, skipinitialspace=True)
+                if df is not None and not df.empty and len(df.columns) > 1:
                     break
-            except:
-                continue
+            if df is not None and not df.empty and len(df.columns) > 1:
+                break
 
     if df is None or df.empty:
         return pd.DataFrame()
@@ -299,7 +325,7 @@ def _rows_from_table(table):
     amount_col = next((i for i,h in enumerate(header) if any(k in h for k in AMOUNT_KEYS)), None)
     desc_col   = next((i for i,h in enumerate(header) if any(k in h for k in DESC_KEYS)), None)
 
-    date_pat   = re.compile(r'\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+\w{3}\s+\d{4}')
+    date_pat   = re.compile(r'\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+\w{3}\s+\d{4}|\d{1,2}\w{3},\d{4}')
     amount_pat = re.compile(r'[\d,]+\.?\d*')
 
     for row in table[1:]:
@@ -320,7 +346,7 @@ def _rows_from_table(table):
 
             if not amount_pat.search(raw_amount):
                 row_str = ' '.join(str(c) for c in row if c)
-                amounts = re.findall(r'₹?\s*([\d,]+\.?\d*)', row_str)
+                amounts = re.findall(r'(?:₹\s*)?([\d,]+\.?\d*)', row_str)
                 if amounts:
                     raw_amount = amounts[0]
 
@@ -334,8 +360,8 @@ def _rows_from_table(table):
 
 def _rows_from_text(text: str):
     rows = []
-    date_pat   = re.compile(r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+\w{3}\s+\d{4})')
-    amount_pat = re.compile(r'₹\s*([\d,]+\.?\d*)')
+    date_pat   = re.compile(r'(\d{1,2}[/\-]\d{1,2}[/\-]\d{2,4}|\d{1,2}\s+\w{3}\s+\d{4}|\d{1,2}\w{3},\d{4})')
+    amount_pat = re.compile(r'(?:₹\s*)?([\d,]+\.?\d*)')
 
     for line in text.split('\n'):
         line = line.strip()

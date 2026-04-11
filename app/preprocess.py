@@ -3,6 +3,8 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, StandardScaler
 import joblib, os
 
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
 FEATURE_COLS = [
     'amount', 'hour', 'day_of_week', 'is_new_merchant',
     'txn_per_day', 'avg_amount_7d', 'device_change',
@@ -11,8 +13,9 @@ FEATURE_COLS = [
 ]
 
 def preprocess(df: pd.DataFrame, fit=False, scaler=None, encoder=None):
-    BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     df = df.copy()
+
+    # derive missing columns safely
     if 'amount_to_avg_ratio' not in df.columns:
         df['amount_to_avg_ratio'] = df['amount'] / (df['avg_amount_7d'] + 1)
     if 'is_weekend' not in df.columns:
@@ -21,18 +24,32 @@ def preprocess(df: pd.DataFrame, fit=False, scaler=None, encoder=None):
         df['failed_txn_count'] = 0
     if 'merchant_risk_score' not in df.columns:
         df['merchant_risk_score'] = 0.1
+    if 'merchant_cat' not in df.columns:
+        df['merchant_cat'] = 'other'
+
+    models_dir = os.path.join(BASE, 'models')
 
     if fit:
         encoder = LabelEncoder()
         df['merchant_cat_enc'] = encoder.fit_transform(df['merchant_cat'])
+
         scaler = StandardScaler()
         X = df[FEATURE_COLS].copy()
         X_scaled = scaler.fit_transform(X)
-        os.makedirs(os.path.join(BASE, 'models'), exist_ok=True)
-        joblib.dump(scaler, os.path.join(BASE, 'models', 'scaler.pkl'))
-        joblib.dump(encoder, os.path.join(BASE, 'models', 'encoder.pkl'))
+
+        os.makedirs(models_dir, exist_ok=True)
+        joblib.dump(scaler,  os.path.join(models_dir, 'scaler.pkl'))
+        joblib.dump(encoder, os.path.join(models_dir, 'encoder.pkl'))
+
     else:
+        # safely handle unseen merchant categories
+        known = set(encoder.classes_)
+        fallback = 'other' if 'other' in known else encoder.classes_[0]
+        df['merchant_cat'] = df['merchant_cat'].apply(
+            lambda x: x if x in known else fallback
+        )
         df['merchant_cat_enc'] = encoder.transform(df['merchant_cat'])
+
         X = df[FEATURE_COLS].copy()
         X_scaled = scaler.transform(X)
 
